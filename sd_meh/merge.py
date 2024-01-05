@@ -161,6 +161,7 @@ def merge_models(
     threads: int = 1,
     sdxl: bool = False,
 ) -> Dict:
+    print("merge_models called with sdxl:", sdxl)
     thetas = load_thetas(models, prune, sdxl, device, precision)
     
     #print(list(thetas["model_a"].keys()))

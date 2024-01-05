@@ -3,7 +3,7 @@ import logging
 
 from sd_meh import merge_methods
 from sd_meh.merge import NUM_TOTAL_BLOCKS, NUM_TOTAL_BLOCKS_XL
-from sd_meh.presets import BLOCK_WEIGHTS_PRESETS
+from sd_meh.presets import BLOCK_WEIGHTS_PRESETS, SDXL_BLOCK_WEIGHTS_PRESETS
 
 MERGE_METHODS = dict(inspect.getmembers(merge_methods, inspect.isfunction))
 BETA_METHODS = [
@@ -14,29 +14,40 @@ BETA_METHODS = [
 
 
 def compute_weights(weights, base, sdxl: bool = False):
+    print(f"compute_weights called with weights: {weights}, sdxl: {sdxl}")
+
+    if isinstance(weights, str) and "," in weights:
+        return list(map(float, weights.split(",")))
+
     if not weights:
         return [base] * (NUM_TOTAL_BLOCKS_XL if sdxl else NUM_TOTAL_BLOCKS)
 
-    if "," not in weights:
-        return weights
+    if isinstance(weights, list):
+        return weights  # Assuming it's already a list of floats
 
-    w_alpha = list(map(float, weights.split(",")))
-    if len(w_alpha) == (NUM_TOTAL_BLOCKS_XL if sdxl else NUM_TOTAL_BLOCKS):
-        return w_alpha
+    # If weights is a single number (not a list or string)
+    return [float(weights)] * (NUM_TOTAL_BLOCKS_XL if sdxl else NUM_TOTAL_BLOCKS)
+
 
 
 def assemble_weights_and_bases(preset, weights, base, greek_letter, sdxl: bool = False):
     logging.info(f"Assembling {greek_letter} w&b")
     if preset:
         logging.info(f"Using {preset} preset")
-        base, *weights = BLOCK_WEIGHTS_PRESETS[preset]
+        if sdxl:
+            base, *weights = SDXL_BLOCK_WEIGHTS_PRESETS[preset]
+        else:
+            base, *weights = BLOCK_WEIGHTS_PRESETS[preset]
     bases = {greek_letter: base}
     weights = {greek_letter: compute_weights(weights, base, sdxl)}
 
     logging.info(f"base_{greek_letter}: {bases[greek_letter]}")
     logging.info(f"{greek_letter} weights: {weights[greek_letter]}")
 
+    print(f"Final weights in assemble_weights_and_bases: {weights}")
+    print(f"Final bases in assemble_weights_and_bases: {bases}")
     return weights, bases
+
 
 
 def interpolate_presets(
@@ -68,10 +79,20 @@ def weights_and_bases(
     block_weights_preset_beta,
     block_weights_preset_alpha_b,
     block_weights_preset_beta_b,
+    sdxl_block_weights_preset_alpha,
+    sdxl_block_weights_preset_beta,
+    sdxl_block_weights_preset_alpha_b,
+    sdxl_block_weights_preset_beta_b,
     presets_alpha_lambda,
     presets_beta_lambda,
     sdxl: bool = False,
 ):
+    # Use sdxl presets if sdxl flag is True, else use standard presets
+    alpha_preset = sdxl_block_weights_preset_alpha if sdxl else block_weights_preset_alpha
+    beta_preset = sdxl_block_weights_preset_beta if sdxl else block_weights_preset_beta
+    alpha_b_preset = sdxl_block_weights_preset_alpha_b if sdxl else block_weights_preset_alpha_b
+    beta_b_preset = sdxl_block_weights_preset_beta_b if sdxl else block_weights_preset_beta_b
+
     weights, bases = assemble_weights_and_bases(
         block_weights_preset_alpha,
         weights_alpha,
@@ -128,4 +149,6 @@ def weights_and_bases(
         weights |= weights_beta
         bases |= bases_beta
 
+    print(f"Weights after assembly: {weights}")
+    print(f"Bases after assembly: {bases}")
     return weights, bases

@@ -3,7 +3,7 @@ import logging
 import click
 
 from sd_meh.merge import merge_models, save_model
-from sd_meh.presets import BLOCK_WEIGHTS_PRESETS
+from sd_meh.presets import BLOCK_WEIGHTS_PRESETS, SDXL_BLOCK_WEIGHTS_PRESETS
 from sd_meh.utils import MERGE_METHODS, weights_and_bases
 
 
@@ -70,6 +70,20 @@ from sd_meh.utils import MERGE_METHODS, weights_and_bases
     default=None,
 )
 @click.option(
+    "-sdxlbwpa",
+    "--sdxl_block_weights_preset_alpha",
+    "sdxl_block_weights_preset_alpha",
+    type=click.Choice(list(SDXL_BLOCK_WEIGHTS_PRESETS.keys()), case_sensitive=False),
+    default=None,
+)
+@click.option(
+    "-sdxlbwpb",
+    "--sdxl_block_weights_preset_beta",
+    "sdxl_block_weights_preset_beta",
+    type=click.Choice(list(SDXL_BLOCK_WEIGHTS_PRESETS.keys()), case_sensitive=False),
+    default=None,
+)
+@click.option(
     "-j",
     "--threads",
     "threads",
@@ -88,6 +102,20 @@ from sd_meh.utils import MERGE_METHODS, weights_and_bases
     "--block_weights_preset_beta_b",
     "block_weights_preset_beta_b",
     type=click.Choice(list(BLOCK_WEIGHTS_PRESETS.keys()), case_sensitive=False),
+    default=None,
+)
+@click.option(
+    "-sdxlbwpab",
+    "--sdxl_block_weights_preset_alpha_b",
+    "sdxl_block_weights_preset_alpha_b",
+    type=click.Choice(list(SDXL_BLOCK_WEIGHTS_PRESETS.keys()), case_sensitive=False),
+    default=None,
+)
+@click.option(
+    "-sdxlbwpbb",
+    "--sdxl_block_weights_preset_beta_b",
+    "sdxl_block_weights_preset_beta_b",
+    type=click.Choice(list(SDXL_BLOCK_WEIGHTS_PRESETS.keys()), case_sensitive=False),
     default=None,
 )
 @click.option(
@@ -132,9 +160,13 @@ def main(
     prune,
     block_weights_preset_alpha,
     block_weights_preset_beta,
+    sdxl_block_weights_preset_alpha,
+    sdxl_block_weights_preset_beta,
     threads,
     block_weights_preset_alpha_b,
     block_weights_preset_beta_b,
+    sdxl_block_weights_preset_alpha_b,
+    sdxl_block_weights_preset_beta_b,
     presets_alpha_lambda,
     presets_beta_lambda,
     logging_level,
@@ -157,6 +189,10 @@ def main(
         block_weights_preset_beta,
         block_weights_preset_alpha_b,
         block_weights_preset_beta_b,
+        sdxl_block_weights_preset_alpha,
+        sdxl_block_weights_preset_beta,
+        sdxl_block_weights_preset_alpha_b,
+        sdxl_block_weights_preset_beta_b,
         presets_alpha_lambda,
         presets_beta_lambda,
         sdxl,

@@ -42,7 +42,7 @@ def get_state_dict_from_checkpoint(pl_sd):
     return pl_sd
 
 
-chckpoint_dict_replacements = {
+checkpoint_dict_replacements = {
     "cond_stage_model.transformer.embeddings.": "cond_stage_model.transformer.text_model.embeddings.",
     "cond_stage_model.transformer.encoder.": "cond_stage_model.transformer.text_model.encoder.",
     "cond_stage_model.transformer.final_layer_norm.": "cond_stage_model.transformer.text_model.final_layer_norm.",
@@ -50,7 +50,7 @@ chckpoint_dict_replacements = {
 
 
 def transform_checkpoint_dict_key(k):
-    for text, replacement in chckpoint_dict_replacements.items():
+    for text, replacement in checkpoint_dict_replacements.items():
         if k.startswith(text):
             k = replacement + k[len(text) :]
     return k

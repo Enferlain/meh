@@ -88,15 +88,24 @@ def load_sd_model(model: os.PathLike | str, device: str = "cpu") -> Dict:
     return SDModel(model, device).load_model()
 
 
-def prune_sd_model(model: Dict) -> Dict:
+def prune_sd_model(model: Dict, sdxl: bool) -> Dict:
     keys = list(model.keys())
-    for k in keys:
-        if (
-            not k.startswith("model.diffusion_model.")
-            #and not k.startswith("first_stage_model.")
-            and not k.startswith("cond_stage_model.")
-        ):
-            del model[k]
+    if sdxl:
+        for k in keys:
+            if (
+                not k.startswith("model.diffusion_model.")
+                #and not k.startswith("first_stage_model.")
+                and not k.startswith("conditioner.embedders.")
+            ):
+                del model[k]
+    else:
+        for k in keys:
+            if (
+                not k.startswith("model.diffusion_model.")
+                and not k.startswith("first_stage_model.")
+                and not k.startswith("cond_stage_model.")
+            ):
+                del model[k]
     return model
 
 
@@ -117,10 +126,11 @@ def load_thetas(
     prune: bool,
     device: str,
     precision: int,
+    sdxl: bool,
 ) -> Dict:
     log_vram("before loading models")
     if prune:
-        thetas = {k: prune_sd_model(load_sd_model(m, "cpu")) for k, m in models.items()}
+        thetas = {k: prune_sd_model(load_sd_model(m, "cpu"), sdxl) for k, m in models.items()}
     else:
         thetas = {k: load_sd_model(m, device) for k, m in models.items()}
 
@@ -149,13 +159,16 @@ def merge_models(
     work_device: Optional[str] = None,
     prune: bool = False,
     threads: int = 1,
+    sdxl: bool = False,
 ) -> Dict:
-    thetas = load_thetas(models, prune, device, precision)
+    thetas = load_thetas(models, prune, sdxl, device, precision)
     
+    #print(list(thetas["model_a"].keys()))
     sdxl = (
-        "conditioner.embedders.1.model.transformer.resblocks.9.mlp.c_proj.weight"
-        in thetas["model_a"].keys()
+    "conditioner.embedders.1.model.transformer.resblocks.9.mlp.c_proj.weight"
+    in thetas["model_a"].keys()
     )
+    print(f"sdxl: {sdxl}")
 
     logging.info(f"start merging with {merge_mode} method")
     if re_basin:
@@ -287,7 +300,7 @@ def rebasin_merge(
     device="cpu",
     work_device=None,
     threads: int = 1,
-    sdxl: bool = True,
+    sdxl: bool = False,
 ):
     # not sure how this does when 3 models are involved...
     model_a = thetas["model_a"].clone()
@@ -426,6 +439,8 @@ def merge_key(
 
             if weight_index >= (NUM_TOTAL_BLOCKS_XL if sdxl else NUM_TOTAL_BLOCKS):
                 raise ValueError(f"illegal block index {weight_index} for key {key}")
+                
+            print(f"key: {key}, weight_index: {weight_index}, sdxl: {sdxl}")    
 
             if weight_index >= 0:
                 current_bases = {k: w[weight_index] for k, w in weights.items()}

@@ -15,8 +15,6 @@ from sd_meh import merge_methods
 from sd_meh.model import SDModel
 from sd_meh.rebasin import (
     apply_permutation,
-    #sdunet_permutation_spec
-    #sdxl_permutation_spec,
     step_weights_and_bases,
     update_model_a,
     weight_matching,
@@ -24,8 +22,9 @@ from sd_meh.rebasin import (
 from sd_meh.merge_PermSpec import sdunet_permutation_spec
 from sd_meh.merge_PermSpec_SDXL import sdxl_permutation_spec
 
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
-logging.getLogger("sd_meh").addHandler(logging.NullHandler())
 MAX_TOKENS = 77
 NUM_INPUT_BLOCKS = 12
 NUM_MID_BLOCK = 1
@@ -94,7 +93,7 @@ def prune_sd_model(model: Dict, sdxl: bool) -> Dict:
         for k in keys:
             if (
                 not k.startswith("model.diffusion_model.")
-                #and not k.startswith("first_stage_model.")
+                #vae?
                 and not k.startswith("conditioner.embedders.")
             ):
                 del model[k]
@@ -102,7 +101,7 @@ def prune_sd_model(model: Dict, sdxl: bool) -> Dict:
         for k in keys:
             if (
                 not k.startswith("model.diffusion_model.")
-                and not k.startswith("first_stage_model.")
+                #and not k.startswith("first_stage_model.")
                 and not k.startswith("cond_stage_model.")
             ):
                 del model[k]
@@ -118,7 +117,7 @@ def restore_sd_model(original_model: Dict, merged_model: Dict) -> Dict:
 
 def log_vram(txt=""):
     alloc = torch.cuda.memory_allocated(0)
-    logging.debug(f"{txt} VRAM: {alloc*1e-9:5.3f}GB")
+    logger.debug(f"{txt} VRAM: {alloc*1e-9:5.3f}GB")
 
 
 def load_thetas(
@@ -129,18 +128,38 @@ def load_thetas(
     sdxl: bool,
 ) -> Dict:
     log_vram("before loading models")
+    logger.info("Loading models with the following parameters:")
+    logger.info(f"Prune: {prune}, Device: {device}, Precision: {precision}, SDXL: {sdxl}")
+    
+    # Check if device is valid
+    valid_devices = ["cpu", "cuda"]
+    if device not in valid_devices:
+        raise ValueError(f"Invalid device setting: '{device}'. Valid options are {valid_devices}.")
+    
     if prune:
+        logger.info("Pruning enabled. Loading and pruning models.")
         thetas = {k: prune_sd_model(load_sd_model(m, "cpu"), sdxl) for k, m in models.items()}
     else:
+        logger.info("Pruning disabled. Loading models without pruning.")
         thetas = {k: load_sd_model(m, device) for k, m in models.items()}
 
-    if device == "cuda":
+    if device.startswith("cuda"):
+        logger.info(f"Transferring models to CUDA device: {device}")
         for model_key, model in thetas.items():
+            logger.debug(f"Processing model: {model_key}")
             for key, block in model.items():
-                if precision == 16:
-                    thetas[model_key].update({key: block.to(device).half()})
-                else:
-                    thetas[model_key].update({key: block.to(device)})
+                try: 
+                    if precision == 16:
+                        logger.debug(f"Transferring block '{key}' to device '{device}' with precision 16.")
+                        thetas[model_key].update({key: block.to(device).half()})
+                    else:
+                        logger.debug(f"Transferring block '{key}' to device '{device}' with full precision.")
+                        thetas[model_key].update({key: block.to(device)})
+                except Exception as e:
+                    logger.error(f"Error transferring block '{key}' to device '{device}': {e}")
+                    raise
+    else:
+        logger.info(f"No CUDA transfer needed, using device: {device}")
 
     log_vram("models loaded")
     return thetas
@@ -161,17 +180,17 @@ def merge_models(
     threads: int = 1,
     sdxl: bool = False,
 ) -> Dict:
-    print("merge_models called with sdxl:", sdxl)
-    thetas = load_thetas(models, prune, sdxl, device, precision)
+    logger.info(f"merge_models called with sdxl: {sdxl}")
+    thetas = load_thetas(models, prune, device, precision, sdxl)
     
-    #print(list(thetas["model_a"].keys()))
+    #logger.debug(list(thetas["model_a"].keys()))
     sdxl = (
     "conditioner.embedders.1.model.transformer.resblocks.9.mlp.c_proj.weight"
     in thetas["model_a"].keys()
     )
-    print(f"sdxl: {sdxl}")
+    logger.info(f"sdxl: {sdxl}")
 
-    logging.info(f"start merging with {merge_mode} method")
+    logger.info(f"start merging with {merge_mode} method")
     if re_basin:
         merged = rebasin_merge(
             thetas,
@@ -212,7 +231,7 @@ def un_prune_model(
     precision: int,
 ) -> Dict:
     if prune:
-        logging.info("Un-pruning merged model")
+        logger.info("Un-pruning merged model")
         del thetas
         gc.collect()
         log_vram("remove thetas")
@@ -303,13 +322,17 @@ def rebasin_merge(
     threads: int = 1,
     sdxl: bool = False,
 ):
+    # Determine if sdxl flag should be used based on the presence of a specific key in the model's parameters
+    sdxl = "conditioner.embedders.1.model.transformer.resblocks.9.mlp.c_proj.weight" in thetas["model_a"].keys()
+
+    # Use appropriate permutation specification based on sdxl flag
     # not sure how this does when 3 models are involved...
     model_a = thetas["model_a"].clone()
-    perm_spec = sdxl_permutation_spec()
+    perm_spec = sdxl_permutation_spec() if sdxl else sdunet_permutation_spec()
 
-    logging.info("Init rebasin iterations")
+    logger.info("Init rebasin iterations")
     for it in range(iterations):
-        logging.info(f"Rebasin iteration {it}")
+        logger.info(f"Rebasin iteration {it}")
         log_vram(f"{it} iteration start")
         new_weights, new_bases = step_weights_and_bases(
             weights,
@@ -343,7 +366,7 @@ def rebasin_merge(
             max_iter=it,
             init_perm=None,
             usefp16=precision == 16,
-            device=device,
+            device=device
         )
 
         log_vram("weight matching #1 done")
@@ -359,7 +382,7 @@ def rebasin_merge(
             max_iter=it,
             init_perm=None,
             usefp16=precision == 16,
-            device=device,
+            device=device
         )
 
         log_vram("weight matching #2 done")
@@ -417,12 +440,17 @@ def merge_key(
         if "model.diffusion_model." in key:
             weight_index = -1
 
-            re_inp = re.compile(r"\.input_blocks\.(\d+)\.")  # 12
+            re_inp = re.compile(r"\.input_blocks\.(\d+)\.")  # 12, 9 for sdxl
             re_mid = re.compile(r"\.middle_block\.(\d+)\.")  # 1
-            re_out = re.compile(r"\.output_blocks\.(\d+)\.")  # 12
+            re_out = re.compile(r"\.output_blocks\.(\d+)\.")  # 12, 9 for sdxl
 
-            if "time_embed" in key:
-                weight_index = 0  # before input blocks
+            if "time_embed" in key and sdxl:
+                # Position of time_embed in SDXL models
+                weight_index = NUM_TOTAL_BLOCKS_XL - 1
+            elif "label_emb" in key and sdxl:    
+                # Position of label_emb layers in SDXL models
+                # Set to index just before middle block
+                weight_index = NUM_INPUT_BLOCKS_XL + 1  # Adjust based on actual model structure
             elif ".out." in key:
                 weight_index = (
                     NUM_TOTAL_BLOCKS_XL - 1 if sdxl else NUM_TOTAL_BLOCKS - 1
@@ -441,7 +469,7 @@ def merge_key(
             if weight_index >= (NUM_TOTAL_BLOCKS_XL if sdxl else NUM_TOTAL_BLOCKS):
                 raise ValueError(f"illegal block index {weight_index} for key {key}")
                 
-            print(f"key: {key}, weight_index: {weight_index}, sdxl: {sdxl}")    
+            logging.debug(f"key: {key}, weight_index: {weight_index}, sdxl: {sdxl}")    
 
             if weight_index >= 0:
                 current_bases = {k: w[weight_index] for k, w in weights.items()}
@@ -515,7 +543,7 @@ def get_merge_method_args(
 
 
 def save_model(model, output_file, file_format) -> None:
-    logging.info(f"Saving {output_file}")
+    logger.info(f"Saving {output_file}")
     if file_format == "safetensors":
         safetensors.torch.save_file(
             model if type(model) == dict else model.to_dict(),

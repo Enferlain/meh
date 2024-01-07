@@ -6,8 +6,9 @@ import safetensors
 import torch
 from tensordict import TensorDict
 
-logging.getLogger("sd_meh").addHandler(logging.NullHandler())
-
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("sd_meh")
+logger.addHandler(logging.StreamHandler())
 
 @dataclass
 class SDModel:
@@ -15,17 +16,22 @@ class SDModel:
     device: str
 
     def load_model(self):
-        logging.info(f"Loading: {self.model_path}")
-        if self.model_path.suffix == ".safetensors":
-            ckpt = safetensors.torch.load_file(
-                self.model_path,
-                device=self.device,
-            )
-        else:
-            ckpt = torch.load(self.model_path, map_location=self.device)
+        logger.info(f"Attempting to load model from path: {self.model_path} on device: {self.device}")
 
-        return TensorDict.from_dict(get_state_dict_from_checkpoint(ckpt))
+        try:
+            if self.model_path.suffix == ".safetensors":
+                logger.debug("Loading model in SafeTensors format.")
+                ckpt = safetensors.torch.load_file(self.model_path, device=self.device)
+            else:    
+                logger.debug("Loading model in non-SafeTensors format.")
+                ckpt = torch.load(self.model_path, map_location=self.device) 
+            
+            logger.info("Model loaded successfully.")
+            return TensorDict.from_dict(get_state_dict_from_checkpoint(ckpt))
 
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            raise
 
 # TODO: tidy up
 # from: stable-diffusion-webui/modules/sd_models.py

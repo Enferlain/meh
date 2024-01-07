@@ -94,57 +94,6 @@ def update_model_a(ps: PermutationSpec, perm, model_a, new_alpha):
     return model_a
 
 
-def weight_matching(
-    ps: PermutationSpec,
-    params_a,
-    params_b,
-    max_iter=1,
-    init_perm=None,
-    usefp16=False,
-    device="cpu",
-):
-    perm_sizes = {
-        p: params_a[axes[0][0]].shape[axes[0][1]]
-        for p, axes in ps.perm_to_axes.items()
-        if axes[0][0] in params_a.keys()
-    }
-    perm = {}
-    perm = (
-        {p: torch.arange(n).to(device) for p, n in perm_sizes.items()}
-        if init_perm is None
-        else init_perm
-    )
-
-    linear_sum = 0
-    number = 0
-
-    special_layers = ["P_bg324", "P_bg358", "P_bg337"]
-    for _ in range(max_iter):
-        progress = False
-        shuffle(special_layers)
-        for p in special_layers:
-            n = perm_sizes[p]
-
-            linear_sum, number, perm, progress = inner_matching(
-                n,
-                ps,
-                p,
-                params_a,
-                params_b,
-                usefp16,
-                progress,
-                number,
-                linear_sum,
-                perm,
-                device,
-            )
-        if not progress:
-            break
-
-    average = linear_sum / number if number > 0 else 0
-    return (perm, average)
-
-
 def inner_matching(
     n,
     ps,
@@ -196,10 +145,61 @@ def inner_matching(
     if newL - oldL != 0:
         linear_sum += abs((newL - oldL).item())
         number += 1
-        log.debug(f"Merge Rebasin permutation: {p}={newL-oldL}")
+        logging.debug(f"Merge Rebasin permutation: {p}={newL-oldL}")
 
     progress = progress or newL > oldL + 1e-12
 
     perm[p] = torch.Tensor(ci).to(device)
 
     return linear_sum, number, perm, progress
+    
+    
+def weight_matching(
+    ps: PermutationSpec,
+    params_a,
+    params_b,
+    max_iter=1,
+    init_perm=None,
+    usefp16=False,
+    device="cpu",
+):
+    perm_sizes = {
+        p: params_a[axes[0][0]].shape[axes[0][1]]
+        for p, axes in ps.perm_to_axes.items()
+        if axes[0][0] in params_a.keys()
+    }
+    perm = {}
+    perm = (
+        {p: torch.arange(n).to(device) for p, n in perm_sizes.items()}
+        if init_perm is None
+        else init_perm
+    )
+
+    linear_sum = 0
+    number = 0
+
+    special_layers = ["P_bg324"]
+    for _i in range(max_iter):
+        progress = False
+        shuffle(special_layers)
+        for p in special_layers:
+            n = perm_sizes[p]
+
+            linear_sum, number, perm, progress = inner_matching(
+                n,
+                ps,
+                p,
+                params_a,
+                params_b,
+                usefp16,
+                progress,
+                number,
+                linear_sum,
+                perm,
+                device,
+            )
+        if not progress:
+            break
+
+    average = linear_sum / number if number > 0 else 0
+    return (perm, average)

@@ -7,7 +7,10 @@ from typing import Dict, NamedTuple, Tuple
 import torch
 from scipy.optimize import linear_sum_assignment
 
-logging.getLogger("sd_meh").addHandler(logging.NullHandler())
+#.getLogger("sd_meh").addHandler(logging.NullHandler())
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
+
 SPECIAL_KEYS = [
     "first_stage_model.decoder.norm_out.weight",
     "first_stage_model.decoder.norm_out.bias",
@@ -106,6 +109,7 @@ def inner_matching(
     linear_sum,
     perm,
     device,
+    sdxl,
 ):
     A = torch.zeros((n, n), dtype=torch.float16) if usefp16 else torch.zeros((n, n))
     A = A.to(device)
@@ -162,7 +166,9 @@ def weight_matching(
     init_perm=None,
     usefp16=False,
     device="cpu",
+    sdxl: bool = False,
 ):
+    logging.debug(f"Starting weight matching: {params_a.keys()} vs {params_b.keys()}")
     perm_sizes = {
         p: params_a[axes[0][0]].shape[axes[0][1]]
         for p, axes in ps.perm_to_axes.items()
@@ -197,6 +203,7 @@ def weight_matching(
                 linear_sum,
                 perm,
                 device,
+                sdxl,
             )
         if not progress:
             break

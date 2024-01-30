@@ -2,6 +2,8 @@ import gc
 import logging
 import os
 import re
+import sys
+import psutil
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -59,6 +61,21 @@ NAI_KEYS = {
 }
 
 
+
+def calculate_cache_size(cache):
+    """Calculate the approximate memory usage of the cache in megabytes."""
+    if cache is None:
+        return 0  # Return 0 MB if cache is None
+
+    size_in_bytes = sys.getsizeof(cache)  # Base size of the dictionary
+    for key, value in cache.items():
+        size_in_bytes += sys.getsizeof(key)  # Add size of key
+        size_in_bytes += sys.getsizeof(value)  # Add size of value
+
+    size_in_mb = size_in_bytes / (1024 ** 2)  # Convert bytes to megabytes
+    return size_in_mb
+
+
 def fix_clip(model: Dict) -> Dict:
     if KEY_POSITION_IDS in model.keys():
         model[KEY_POSITION_IDS] = torch.tensor(
@@ -81,7 +98,6 @@ def fix_key(model: Dict, key: str, sdxl: bool):
                 model[key.replace(nk, NAI_KEYS[nk])] = model[key]
                 del model[key]
     return model
-
 
 
 # https://github.com/j4ded/sdweb-merge-block-weighted-gui/blob/master/scripts/mbw/merge_block_weighted.py#L115
@@ -126,9 +142,15 @@ def restore_sd_model(original_model: Dict, merged_model: Dict) -> Dict:
     return merged_model
 
 
-def log_vram(txt=""):
-    alloc = torch.cuda.memory_allocated(0)
-    logger.debug(f"{txt} VRAM: {alloc*1e-9:5.3f}GB")
+def log_memory_usage(stage: str):
+    ram_usage = psutil.Process(os.getpid()).memory_info().rss / 1e6  # MB
+    logger.debug(f"{stage} - RAM Usage: {ram_usage:.2f} MB")
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()  # Wait for all CUDA kernels to finish
+        gpu_memory_allocated = torch.cuda.memory_allocated() / 1e6  # MB
+        gpu_memory_reserved = torch.cuda.memory_reserved() / 1e6  # MB
+        logger.debug(f"{stage} - GPU Memory Allocated: {gpu_memory_allocated:.2f} MB, Reserved: {gpu_memory_reserved:.2f} MB")
 
 
 def load_thetas(
@@ -138,7 +160,7 @@ def load_thetas(
     precision: int,
     sdxl: bool,
 ) -> Dict:
-    log_vram("before loading models")
+    log_memory_usage("before loading models")
     logger.info("Loading models with the following parameters:")
     logger.info(f"Prune: {prune}, Device: {device}, Precision: {precision}, SDXL: {sdxl}")
     
@@ -172,7 +194,7 @@ def load_thetas(
     else:
         logger.info(f"No CUDA transfer needed, using device: {device}")
 
-    log_vram("models loaded")
+    log_memory_usage("models loaded")
     return thetas
 
 
@@ -190,6 +212,7 @@ def merge_models(
     prune: bool = False,
     threads: int = 1,
     sdxl: bool = False,
+    cache: Optional[Dict] = None,
 ) -> Dict:
     logger.info(f"Initializing merge process. Mode: {merge_mode}, SDXL: {sdxl}, Device: {device}")
     thetas = load_thetas(models, prune, device, precision, sdxl)
@@ -216,6 +239,7 @@ def merge_models(
             work_device=work_device,
             threads=threads,
             sdxl=sdxl,
+            cache=cache,
         )
     else:
         logger.info("Simple merge initiated.")
@@ -230,6 +254,7 @@ def merge_models(
             work_device=work_device,
             threads=threads,
             sdxl=sdxl,
+            cache=cache,
         )
     logger.info("Unpruning merged model.")
     unpruned_model = un_prune_model(merged, thetas, models, device, prune, precision, sdxl)
@@ -250,7 +275,7 @@ def un_prune_model(
         logger.info("Un-pruning merged model")
         del thetas
         gc.collect()
-        log_vram("remove thetas")
+        log_memory_usage("remove thetas")
 
         # Un-prune model A
         original_a = load_sd_model(models["model_a"], device)
@@ -263,7 +288,7 @@ def un_prune_model(
                     merged.update({key: merged[key].half()})
         del original_a
         gc.collect()
-        log_vram("remove original_a")
+        log_memory_usage("remove original_a")
 
         # Un-prune model B
         original_b = load_sd_model(models["model_b"], device)
@@ -278,7 +303,7 @@ def un_prune_model(
         # Delete original_b after the loop is completed
         del original_b
         gc.collect()
-        log_vram("remove original_b")
+        log_memory_usage("remove original_b")
         logger.debug("Un-pruning for model B completed.")
 
     return fix_model(merged, sdxl)
@@ -296,6 +321,7 @@ def simple_merge(
     work_device: Optional[str] = None,
     threads: int = 1,
     sdxl: bool = False,
+    cache: Optional[Dict] = None,
 ) -> Dict:
     futures = []
     with tqdm(thetas["model_a"].keys(), desc="stage 1") as progress:
@@ -314,13 +340,14 @@ def simple_merge(
                     device,
                     work_device,
                     sdxl,
+                    cache,
                 )
                 futures.append(future)
 
         for res in futures:
             res.result()
 
-    log_vram("after stage 1")
+    log_memory_usage("after stage 1")
 
     for key in tqdm(thetas["model_b"].keys(), desc="stage 2"):
         if KEY_POSITION_IDS in key:
@@ -330,7 +357,7 @@ def simple_merge(
             if precision == 16:
                 thetas["model_a"].update({key: thetas["model_a"][key].half()})
 
-    log_vram("after stage 2")
+    log_memory_usage("after stage 2")
 
     return fix_model(thetas["model_a"], sdxl)
 
@@ -360,7 +387,7 @@ def rebasin_merge(
 
     for it in range(iterations):
         logger.info(f"Processing rebasin iteration: {it+1}/{iterations}")
-        log_vram(f"Before iteration {it+1}")
+        log_memory_usage(f"Before iteration {it+1}")
         # Updating weights and bases
         new_weights, new_bases = step_weights_and_bases(
             weights,
@@ -368,7 +395,7 @@ def rebasin_merge(
             it,
             iterations,
         )
-        log_vram("After updating weights and bases")
+        log_memory_usage("After updating weights and bases")
 
         # normal block merge we already know and love
         thetas["model_a"] = simple_merge(
@@ -383,7 +410,7 @@ def rebasin_merge(
             threads,
             sdxl,
         )
-        log_vram("Block merge completed")
+        log_memory_usage("Block merge completed")
 
         # Weight matching and permutation application
         perm_1, y = weight_matching(
@@ -397,7 +424,7 @@ def rebasin_merge(
             sdxl=sdxl
         )
         thetas["model_a"] = apply_permutation(perm_spec, perm_1, thetas["model_a"])
-        log_vram("First weight matching and permutation applied")
+        log_memory_usage("First weight matching and permutation applied")
 
         perm_2, z = weight_matching(
             perm_spec,
@@ -415,7 +442,7 @@ def rebasin_merge(
         thetas["model_a"] = update_model_a(
             perm_spec, perm_2, thetas["model_a"], new_alpha
         )
-        log_vram(f"Second weight matching and model update completed for iteration {it+1}")
+        log_memory_usage(f"Second weight matching and model update completed for iteration {it+1}")
 
     if weights_clip:
         clip_thetas = thetas.copy()
@@ -445,6 +472,7 @@ def merge_key(
     device: str = "cpu",
     work_device: Optional[str] = None,
     sdxl: bool = False,
+    cache: Optional[Dict] = None,
 ) -> Optional[Tuple[str, Dict]]:
     logger.debug(f"Starting merge_key function for key: {key}")
     if work_device is None:
@@ -503,7 +531,7 @@ def merge_key(
         except AttributeError as e:
             raise ValueError(f"{merge_mode} not implemented, aborting merge!") from e
 
-        merge_args = get_merge_method_args(current_bases, thetas, key, work_device)
+        merge_args = get_merge_method_args(current_bases, thetas, key, work_device, cache)
 
         # dealing wiht pix2pix and inpainting models
         if (a_size := merge_args["a"].size()) != (b_size := merge_args["b"].size()):
@@ -554,15 +582,25 @@ def get_merge_method_args(
     thetas: Dict,
     key: str,
     work_device: str,
+    cache: Optional[Dict],    
 ) -> Dict:
+    if cache is not None and key not in cache:
+        cache[key] = {}
+
     merge_method_args = {
         "a": thetas["model_a"][key].to(work_device),
         "b": thetas["model_b"][key].to(work_device),
         **current_bases,
+        "cache": cache[key] if cache is not None else None,
     }
 
     if "model_c" in thetas:
         merge_method_args["c"] = thetas["model_c"][key].to(work_device)
+
+    # Calculate and log the cache size if cache is enabled
+    if cache is not None:
+        cache_size_mb = calculate_cache_size(cache)
+        logging.debug(f"Current cache size for key '{key}': {cache_size_mb:.2f} MB")
 
     return merge_method_args
 

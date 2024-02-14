@@ -14,19 +14,26 @@ BETA_METHODS = [
 
 
 def compute_weights(weights, base, sdxl: bool = False):
-    print(f"compute_weights called with weights: {weights}, sdxl: {sdxl}")
+    # Define the number of total blocks based on the sdxl flag
+    num_blocks = NUM_TOTAL_BLOCKS_XL if sdxl else NUM_TOTAL_BLOCKS
 
+    logging.info(f"compute_weights called with weights: {weights}, sdxl: {sdxl}")
+
+    # If weights is a comma-separated string, convert to a list of floats
     if isinstance(weights, str) and "," in weights:
         return list(map(float, weights.split(",")))
 
+    # If weights is not provided, use the base value for all blocks
     if not weights:
-        return [base] * (NUM_TOTAL_BLOCKS_XL if sdxl else NUM_TOTAL_BLOCKS)
+        return [base] * num_blocks
 
+    # If weights is already a list, return as is (assuming it's a list of floats)
     if isinstance(weights, list):
-        return weights  # Assuming it's already a list of floats
+        return weights
 
-    # If weights is a single number (not a list or string)
-    return [float(weights)] * (NUM_TOTAL_BLOCKS_XL if sdxl else NUM_TOTAL_BLOCKS)
+    # If weights is a single number (not a list or string), create a list of that value for all blocks
+    return [float(weights)] * num_blocks
+
 
 
 
@@ -44,8 +51,8 @@ def assemble_weights_and_bases(preset, weights, base, greek_letter, sdxl: bool =
     logging.info(f"base_{greek_letter}: {bases[greek_letter]}")
     logging.info(f"{greek_letter} weights: {weights[greek_letter]}")
 
-    print(f"Final weights in assemble_weights_and_bases: {weights}")
-    print(f"Final bases in assemble_weights_and_bases: {bases}")
+    logging.info(f"Final weights in assemble_weights_and_bases: {weights}")
+    logging.info(f"Final bases in assemble_weights_and_bases: {bases}")
     return weights, bases
 
 

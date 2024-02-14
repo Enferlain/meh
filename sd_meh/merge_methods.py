@@ -21,6 +21,9 @@ __all__ = [
     "ties_add_difference",
     "rotate",
     "train_difference",
+    "add_perpendicular",
+    "vector_rejection",
+    "slerp",
 ]
 
 
@@ -302,7 +305,7 @@ def fractional_matrix_power(matrix: Tensor, power: float, cache: dict):
     return result.real.to(dtype=matrix.dtype)
     
     
-def train_difference(a: Tensor, b: Tensor, c: Tensor, alpha: float, **kwargs) -> Tensor:
+def train_difference(a: Tensor, b: Tensor, c: Tensor, **kwargs) -> Tensor:
     diff_AB = a.float() - b.float()
     distance_A0 = torch.abs(b.float() - c.float())
     distance_A1 = torch.abs(b.float() - a.float())
@@ -319,3 +322,50 @@ def train_difference(a: Tensor, b: Tensor, c: Tensor, alpha: float, **kwargs) ->
 
 def add_trained_difference(a: Tensor, b: Tensor, c: Tensor, alpha: float, **kwargs) -> Tensor:
     return a + alpha * 1.8 * train_difference(a, b, c)
+    
+    
+def add_perpendicular(
+    a: Tensor, b: Tensor, alpha: float, c: Tensor = None, **kwargs
+) -> Tensor:
+    a_diff = a.float() - c.float()
+    b_diff = b.float() - c.float()
+    a_ortho = a_diff * (a_diff / torch.linalg.norm(a_diff) * (b_diff / torch.linalg.norm(a_diff))).sum()
+    b_perp = b_diff - a_ortho
+    res = a + alpha * b_perp
+    if torch.isnan(res).any():
+        return a
+    return res.to(a.dtype)
+
+def rej(a, b):
+    return b * torch.tensordot(a, b, dims=len(a.shape)) / torch.tensordot(b, b, dims=len(a.shape))
+
+def vector_rejection(a, b, c, alpha):
+    ac_diff = a - c
+    bc_diff = b - c
+    merged = rej(ac_diff, bc_diff)
+    return a + merged * alpha
+    
+    
+def slerp(a: Tensor, b: Tensor, c: Tensor, alpha: float, beta: float, **kwargs) -> Tensor:
+    x_sum = (1 - alpha) * a + alpha * b
+    if (a == c).all() or (b == c).all():
+        return x_sum
+
+    try:
+        a_diff = a - c
+        b_diff = b - c
+        a_diff_norm = a_diff / torch.linalg.norm(a_diff)
+        b_diff_norm = b_diff / torch.linalg.norm(b_diff)
+
+        omega = torch.arccos(torch.clamp(torch.sum(a_diff_norm * b_diff_norm), EPSILON - 1.0, 1.0 - EPSILON))
+        base = torch.sin(omega)
+
+        x_slerp = a_diff_norm * torch.sin((1 - alpha) * omega) / base
+        x_slerp += b_diff_norm * torch.sin(alpha * omega) / base
+
+        norm = (1 - alpha) * torch.linalg.norm(a_diff) + alpha * torch.linalg.norm(b_diff)
+        x_slerp = x_slerp * norm + c
+        res = (1 - beta) * x_sum + beta * x_slerp
+        return res
+    except RuntimeError:
+        return slerp(a.float(), b.float(), c.float(), alpha, beta, **kwargs)

@@ -121,7 +121,7 @@ def prune_sd_model(model: Dict, sdxl: bool) -> Dict:
             if (
                 not k.startswith("model.diffusion_model.")
                 #vae?
-                #and not k.startswith("conditioner.embedders.")
+                and not k.startswith("conditioner.embedders.") #error with rebasin in sdxl. wtf is cond_stage_model.transformer.text_model.encoder.layers.0.layer_norm1
             ):
                 del model[k]
     else:
@@ -129,7 +129,7 @@ def prune_sd_model(model: Dict, sdxl: bool) -> Dict:
             if (
                 not k.startswith("model.diffusion_model.")
                 #and not k.startswith("first_stage_model.")
-                #and not k.startswith("cond_stage_model.")
+                and not k.startswith("cond_stage_model.")
             ):
                 del model[k]
     return model
@@ -239,7 +239,6 @@ def merge_models(
             work_device=work_device,
             threads=threads,
             sdxl=sdxl,
-            cache=cache,
         )
     else:
         logger.info("Simple merge initiated.")
@@ -496,13 +495,8 @@ def merge_key(
             re_mid = re.compile(r"\.middle_block\.(\d+)\.")  # 1
             re_out = re.compile(r"\.output_blocks\.(\d+)\.")  # 12, 9 for sdxl
 
-            if "time_embed" in key and sdxl:
-                # Position of time_embed in SDXL models
-                weight_index = NUM_TOTAL_BLOCKS_XL - 1
-            elif "label_emb" in key and sdxl:    
-                # Position of label_emb layers in SDXL models
-                # Set to index just before middle block
-                weight_index = NUM_INPUT_BLOCKS_XL + 1  # Adjust based on actual model structure
+            if "time_embed" in key:
+                weight_index = 0  # before input blocks
             elif ".out." in key:
                 weight_index = (
                     NUM_TOTAL_BLOCKS_XL - 1 if sdxl else NUM_TOTAL_BLOCKS - 1

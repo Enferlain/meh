@@ -211,6 +211,7 @@ def main(
         work_device,
         prune,
         threads,
+        sdxl,
     )
 
     save_model(merged, output_path, output_format)

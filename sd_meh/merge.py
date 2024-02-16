@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from sd_meh import merge_methods
 from sd_meh.model import SDModel
+#from sd_meh.utils # import is utils really not needed anywhere here?
 from sd_meh.rebasin import (
     apply_permutation,
     step_weights_and_bases,
@@ -446,7 +447,8 @@ def rebasin_merge(
     if weights_clip:
         clip_thetas = thetas.copy()
         clip_thetas["model_a"] = model_a
-        thetas["model_a"] = clip_weights(thetas, thetas["model_a"])
+        # Use clip_thetas as the first argument instead of thetas
+        thetas["model_a"] = clip_weights(clip_thetas, thetas["model_a"])
         logger.debug("Weights clipping applied to the merged model.")
         
     logger.info("Rebasin merging process completed successfully.")

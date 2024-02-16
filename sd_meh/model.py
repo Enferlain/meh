@@ -20,7 +20,6 @@ logger.addHandler(handler)
 class SDModel:
     model_path: os.PathLike
     device: str
-    sdxl: bool = False  # Flag to indicate if the model is an SDXL model
 
     def load_model(self):
         model_type = "SafeTensors" if self.model_path.suffix == ".safetensors" else "standard"
@@ -32,8 +31,8 @@ class SDModel:
             else:
                 ckpt = torch.load(self.model_path, map_location=self.device)
 
-            logger.debug(f"Model loaded. Processing state dictionary. SDXL: {self.sdxl}")
-            state_dict = get_state_dict_from_checkpoint(ckpt, self.sdxl)
+            # Process the state dictionary without explicitly passing the sdxl flag
+            state_dict = get_state_dict_from_checkpoint(ckpt)
             
             logger.info("Model loaded and processed successfully.")
             return TensorDict.from_dict(state_dict)
@@ -42,14 +41,22 @@ class SDModel:
             logger.error(f"Error loading model: {e}", exc_info=True)  # Log with exception information
             raise
 
+
 # TODO: tidy up
 # from: stable-diffusion-webui/modules/sd_models.py
 def get_state_dict_from_checkpoint(pl_sd, sdxl: bool = False):
     pl_sd = pl_sd.pop("state_dict", pl_sd)
     pl_sd.pop("state_dict", None)
+
+    # Check for the presence of the specific key and set sdxl to True if found
+    specific_key = "model.diffusion_model.output_blocks.0.1.transformer_blocks.6.ff.net.0.proj.weight"
+    if specific_key in pl_sd:
+        sdxl = True
+        logger.info(f"Specific key '{specific_key}' found. Setting SDXL to True.")
+
     sd = {}
     for k, v in pl_sd.items():
-        # Apply key transformations only if is_sdxl is False
+        # Apply key transformations only if sdxl is False
         new_key = transform_checkpoint_dict_key(k) if not sdxl else k
         sd[new_key] = v
 

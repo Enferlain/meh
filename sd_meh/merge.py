@@ -537,6 +537,7 @@ def merge_key(
             else:
                 merged_key = merge_args["b"]
         else:
+            logger.debug(f"merge_args: {merge_args}")
             merged_key = merge_method(**merge_args).to(device)
 
         if weights_clip:
@@ -587,6 +588,7 @@ def get_merge_method_args(
         "a": thetas["model_a"][key].to(work_device),
         "b": thetas["model_b"][key].to(work_device),
         **current_bases,
+        "key": key,  # Add 'key' to the dictionary 
         "cache": cache[key] if cache is not None else None,
     }
 

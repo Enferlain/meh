@@ -3,21 +3,22 @@ import logging
 from collections import defaultdict
 from random import shuffle
 from typing import Dict, NamedTuple, Tuple
+from tqdm import tqdm
 
 import torch
 from scipy.optimize import linear_sum_assignment
 
 #.getLogger("sd_meh").addHandler(logging.NullHandler())
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("merge_models")
+logging.basicConfig(level=logging.INFO)
 
 SPECIAL_KEYS = [
     "first_stage_model.decoder.norm_out.weight",
     "first_stage_model.decoder.norm_out.bias",
     "first_stage_model.encoder.norm_out.weight",
     "first_stage_model.encoder.norm_out.bias",
-    "model.diffusion_model.out.0.weight",
-    "model.diffusion_model.out.0.bias",
+#    "model.diffusion_model.out.0.weight",
+#    "model.diffusion_model.out.0.bias",
 ]
 
 
@@ -111,23 +112,53 @@ def inner_matching(
     device,
     sdxl,
 ):
-    A = torch.zeros((n, n), dtype=torch.float16) if usefp16 else torch.zeros((n, n))
+    """
+    Performs inner weight matching for a specific layer.
+
+    Args:
+        n: Size of the weight tensors.
+        ps: PermutationSpec object.
+        p: Layer key.
+        params_a: Dictionary containing weights from model A.
+        params_b: Dictionary containing weights from model B.
+        usefp16: Boolean flag indicating if using fp16 data type.
+        progress: Boolean flag indicating progress made (optional).
+        number: Number of successful improvement steps (optional).
+        linear_sum: Cumulative improvement score (optional).
+        perm: Current permutation dictionary.
+        device: Device to use for computations (e.g., "cpu" or "cuda").
+        sdxl: Boolean flag for enabling detailed logging (optional).
+
+    Returns:
+        linear_sum: Updated cumulative improvement score.
+        number: Updated number of successful improvement steps.
+        perm: Updated permutation dictionary with improved alignment for layer p.
+        progress: Boolean flag indicating if improvement was made.
+    """
+
+    A = torch.zeros((n, n), dtype=torch.float16 if usefp16 else torch.zeros((n, n)))
     A = A.to(device)
 
-    for wk, axis in ps.perm_to_axes[p]:
-        w_a = params_a[wk]
-        w_b = get_permuted_param(ps, perm, wk, params_b, except_axis=axis)
-        w_a = torch.moveaxis(w_a, axis, 0).reshape((n, -1)).to(device)
-        w_b = torch.moveaxis(w_b, axis, 0).reshape((n, -1)).T.to(device)
+    logging.debug(f"Processing weight key for layer {p} within inner_matching")
 
-        if usefp16:
-            w_a = w_a.half().to(device)
-            w_b = w_b.half().to(device)
+    # Check if ps.perm_to_axes[p] is a dictionary
+    if isinstance(ps.perm_to_axes[p], dict):
+        for wk, axis in ps.perm_to_axes[p].items():
+            if wk.startswith("first_stage_model"):
+                continue  # Skip weight key if it starts with "first_stage_model"
+            w_a = params_a[wk]
+            w_b = get_permuted_param(ps, perm, wk, params_b, except_axis=axis)
+            w_a = torch.moveaxis(w_a, axis, 0).reshape((n, -1)).to(device)
+            w_b = torch.moveaxis(w_b, axis, 0).reshape((n, -1)).T.to(device)
 
-        try:
-            A += torch.matmul(w_a, w_b)
-        except RuntimeError:
-            A += torch.matmul(torch.dequantize(w_a), torch.dequantize(w_b))
+            if usefp16:
+                w_a = w_a.half().to(device)
+                w_b = w_b.half().to(device)
+
+            try:
+                A += torch.matmul(w_a, w_b)
+            except RuntimeError:
+                A += torch.matmul(torch.dequantize(w_a), torch.dequantize(w_b))
 
     A = A.cpu()
     ri, ci = linear_sum_assignment(A.detach().numpy(), maximize=True)
@@ -156,8 +187,7 @@ def inner_matching(
     perm[p] = torch.Tensor(ci).to(device)
 
     return linear_sum, number, perm, progress
-    
-    
+
 def weight_matching(
     ps: PermutationSpec,
     params_a,
@@ -184,29 +214,28 @@ def weight_matching(
     linear_sum = 0
     number = 0
 
-    special_layers = ["P_bg324"]
+    # Remove special_layers
+    
     for _i in range(max_iter):
         progress = False
-        shuffle(special_layers)
-        for p in special_layers:
-            n = perm_sizes[p]
-
-            linear_sum, number, perm, progress = inner_matching(
-                n,
-                ps,
-                p,
-                params_a,
-                params_b,
-                usefp16,
-                progress,
-                number,
-                linear_sum,
-                perm,
-                device,
-                sdxl,
-            )
+        # Loop through all layers in perm_sizes
+        for p, n in perm_sizes.items():
+          linear_sum, number, perm, progress = inner_matching(
+              n,
+              ps,
+              p,
+              params_a,
+              params_b,
+              usefp16,
+              progress,
+              number,
+              linear_sum,
+              perm,
+              device,
+              sdxl,
+          )
         if not progress:
-            break
+          break
 
     average = linear_sum / number if number > 0 else 0
     return (perm, average)
